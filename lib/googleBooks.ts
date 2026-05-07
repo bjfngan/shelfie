@@ -24,23 +24,7 @@ export async function searchBooks(query: string): Promise<BookMetadata[]> {
   const data = await res.json();
   if (!data.items || data.items.length === 0) return [];
 
-  return data.items.map((item: any): BookMetadata => {
-    const info = item.volumeInfo ?? {};
-    const title: string = info.title ?? "Unknown Title";
-    const author: string = (info.authors ?? ["Unknown Author"])[0];
-    const thumbnail: string | null =
-      info.imageLinks?.smallThumbnail?.replace("http://", "https://") ?? null;
-
-    return {
-      id: item.id,
-      title,
-      author,
-      rating: info.averageRating ?? null,
-      ratingsCount: info.ratingsCount ?? null,
-      thumbnail,
-      goodreadsUrl: buildGoodreadsUrl(title, author),
-    };
-  });
+  return data.items.map(normalizeVolume);
 }
 
 export async function getBookById(id: string): Promise<BookMetadata | null> {
@@ -56,12 +40,16 @@ export async function getBookById(id: string): Promise<BookMetadata | null> {
     throw new Error(`Google Books API error: ${res.status} — ${body}`);
   }
 
-  const item = await res.json();
+  return normalizeVolume(await res.json());
+}
+
+function normalizeVolume(item: any): BookMetadata {
   const info = item.volumeInfo ?? {};
   const title: string = info.title ?? "Unknown Title";
   const author: string = (info.authors ?? ["Unknown Author"])[0];
   const thumbnail: string | null =
     info.imageLinks?.smallThumbnail?.replace("http://", "https://") ?? null;
+  const isbn = extractIsbn(info.industryIdentifiers);
 
   return {
     id: item.id,
@@ -70,11 +58,28 @@ export async function getBookById(id: string): Promise<BookMetadata | null> {
     rating: info.averageRating ?? null,
     ratingsCount: info.ratingsCount ?? null,
     thumbnail,
-    goodreadsUrl: buildGoodreadsUrl(title, author),
+    goodreadsUrl: buildGoodreadsUrl(title, author, isbn),
   };
 }
 
-function buildGoodreadsUrl(title: string, author: string): string {
+function extractIsbn(
+  identifiers: Array<{ type: string; identifier: string }> | undefined
+): string | null {
+  if (!identifiers) return null;
+  const isbn13 = identifiers.find((i) => i.type === "ISBN_13");
+  if (isbn13) return isbn13.identifier;
+  const isbn10 = identifiers.find((i) => i.type === "ISBN_10");
+  return isbn10?.identifier ?? null;
+}
+
+// With an ISBN, goodreads.com/book/isbn/{isbn} redirects to the actual book page.
+// Without one, fall back to the search URL.
+function buildGoodreadsUrl(
+  title: string,
+  author: string,
+  isbn: string | null
+): string {
+  if (isbn) return `https://www.goodreads.com/book/isbn/${isbn}`;
   const query = encodeURIComponent(`${title} ${author}`);
   return `https://www.goodreads.com/search?q=${query}`;
 }
