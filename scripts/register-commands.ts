@@ -91,17 +91,8 @@ const commands = [
     ],
   },
   {
-    name: "current",
-    description: "Show or set the currently-reading book",
-    options: [
-      {
-        name: "book",
-        description: "Pick a book to mark as currently reading (omit to view current)",
-        type: 3, // STRING
-        required: false,
-        autocomplete: true,
-      },
-    ],
+    name: "poll-end",
+    description: "End the poll and set the top-voted book as currently reading",
   },
   {
     name: "clear-current",

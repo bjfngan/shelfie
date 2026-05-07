@@ -93,9 +93,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const score = getOption(interaction, "score") as number;
       return handleRate(res, userId, bookId ?? null, score);
     }
-    if (name === "current") {
-      const bookId = getOption(interaction, "book") as string | undefined;
-      return handleCurrent(res, bookId ?? null);
+    if (name === "poll-end") {
+      return handlePollEnd(res);
     }
     if (name === "clear-current") {
       return handleClearCurrent(res);
@@ -136,12 +135,11 @@ async function handleAutocomplete(res: VercelResponse, interaction: any) {
     return res.json({ type: 8, data: { choices } });
   }
 
-  // /vote, /remove-book, /rate, /current, /finish: filter the current reading list
+  // /vote, /remove-book, /rate, /finish: filter the current reading list
   if (
     commandName === "vote" ||
     commandName === "remove-book" ||
     commandName === "rate" ||
-    commandName === "current" ||
     commandName === "finish"
   ) {
     const lower = query.toLowerCase();
@@ -460,48 +458,44 @@ async function handleRate(
   );
 }
 
-async function handleCurrent(res: VercelResponse, bookId: string | null) {
-  if (!bookId) {
-    const currentId = await getCurrent();
-    if (!currentId) {
-      return res.json(
-        ephemeralResponse(
-          "Nothing is currently being read. Use `/current book:<title>` to set one."
-        )
-      );
-    }
-    const books = await getBooks();
-    const book = books.find((b) => b.id === currentId);
-    if (!book) {
-      return res.json(
-        ephemeralResponse(
-          "Currently reading is set to a book that's no longer in the list."
-        )
-      );
-    }
+async function handlePollEnd(res: VercelResponse) {
+  const [books, votes] = await Promise.all([getBooks(), getVotes()]);
+  const tally = tallyVotes(votes);
+
+  if (tally.length === 0) {
+    return res.json(
+      ephemeralResponse("No votes have been cast — nothing to end yet.")
+    );
+  }
+
+  // Find the top-voted book that still exists in the reading list
+  const winnerEntry = tally.find((t) => books.some((b) => b.id === t.bookId));
+  if (!winnerEntry) {
     return res.json(
       ephemeralResponse(
-        `📖 Currently reading: **${book.title}** by ${book.author}`
+        "All voted-for books have been removed from the list. Clear votes and start a new poll."
       )
     );
   }
 
-  const books = await getBooks();
-  const book = books.find((b) => b.id === bookId);
-  if (!book) {
-    return res.json(
-      ephemeralResponse(
-        "That book is no longer in the reading list. Use `/books` to see current options."
-      )
-    );
-  }
+  const winner = books.find((b) => b.id === winnerEntry.bookId)!;
 
-  await setCurrent(bookId);
-  return res.json(
-    ephemeralResponse(
-      `📖 Now reading: **${book.title}** by ${book.author}`
-    )
-  );
+  await setCurrent(winner.id);
+  await clearVotes();
+
+  const total = tally.reduce((sum, t) => sum + t.count, 0);
+  const pct = Math.round((winnerEntry.count / total) * 100);
+
+  const embed = {
+    title: "🏆 Poll Ended",
+    description: `**${winner.title}** by ${winner.author} won with **${winnerEntry.count}** vote${
+      winnerEntry.count === 1 ? "" : "s"
+    } (${pct}%) and is now the currently-reading book.`,
+    color: EMBED_COLOR,
+    footer: { text: "Votes have been cleared. Use /vote to start a new poll." },
+  };
+
+  return res.json(embedResponse(embed));
 }
 
 async function handleClearCurrent(res: VercelResponse) {
