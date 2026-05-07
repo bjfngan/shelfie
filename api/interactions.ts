@@ -1,8 +1,9 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { InteractionType, verifyKey } from "discord-interactions";
-import { addBook, getBooks, removeBook } from "../lib/books";
+import { addBook, Book, getBooks, removeBook } from "../lib/books";
 import { embedResponse, ephemeralResponse, EMBED_COLOR } from "../lib/discord";
 import { searchBooks } from "../lib/googleBooks";
+import { castVote, clearVotes, getVotes, tallyVotes } from "../lib/votes";
 
 // Required: get raw bytes for Ed25519 signature verification
 export const config = { api: { bodyParser: false } };
@@ -43,8 +44,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.json({ type: 1 });
   }
 
+  if (interaction.type === InteractionType.APPLICATION_COMMAND_AUTOCOMPLETE) {
+    return handleAutocomplete(res, interaction);
+  }
+
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
     const name: string = interaction.data.name;
+    const userId: string =
+      interaction.member?.user?.id ?? interaction.user?.id ?? "unknown";
 
     if (name === "books") {
       return handleBooks(res);
@@ -57,9 +64,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const id = getOption(interaction, "id") as string;
       return handleRemoveBook(res, id);
     }
+    if (name === "vote") {
+      const bookId = getOption(interaction, "book") as string;
+      return handleVote(res, userId, bookId);
+    }
+    if (name === "poll") {
+      return handlePoll(res);
+    }
+    if (name === "poll-clear") {
+      return handlePollClear(res);
+    }
   }
 
   return res.status(400).send("Unknown interaction type");
+}
+
+async function handleAutocomplete(res: VercelResponse, interaction: any) {
+  const commandName: string = interaction.data.name;
+  if (commandName !== "vote") {
+    return res.json({ type: 8, data: { choices: [] } });
+  }
+
+  const focused = interaction.data.options?.find((o: any) => o.focused);
+  const query = ((focused?.value as string) ?? "").toLowerCase();
+
+  const books = await getBooks();
+  const matches = books.filter((b) =>
+    `${b.title} ${b.author}`.toLowerCase().includes(query)
+  );
+
+  const choices = matches.slice(0, 25).map((b) => ({
+    name: truncate(`${b.title} — ${b.author}`, 100),
+    value: b.id,
+  }));
+
+  // type 8 = APPLICATION_COMMAND_AUTOCOMPLETE_RESULT
+  return res.json({ type: 8, data: { choices } });
+}
+
+function truncate(str: string, max: number): string {
+  return str.length <= max ? str : str.slice(0, max - 1) + "…";
 }
 
 function getOption(interaction: any, name: string): unknown {
@@ -176,4 +220,70 @@ async function handleRemoveBook(res: VercelResponse, bookId: string) {
   }
 
   return res.json(ephemeralResponse("Book removed from the reading list."));
+}
+
+async function handleVote(res: VercelResponse, userId: string, bookId: string) {
+  const books = await getBooks();
+  const book = books.find((b) => b.id === bookId);
+
+  if (!book) {
+    return res.json(
+      ephemeralResponse(
+        "That book is no longer in the reading list. Use `/books` to see current options."
+      )
+    );
+  }
+
+  await castVote(userId, bookId);
+  return res.json(
+    ephemeralResponse(
+      `🗳️ Your vote is in for **${book.title}** by ${book.author}. Use \`/poll\` to see the tally.`
+    )
+  );
+}
+
+async function handlePoll(res: VercelResponse) {
+  const [books, votes] = await Promise.all([getBooks(), getVotes()]);
+  const tally = tallyVotes(votes);
+  const total = Object.keys(votes).length;
+
+  if (total === 0) {
+    return res.json(
+      ephemeralResponse("No votes yet. Use `/vote` to cast yours!")
+    );
+  }
+
+  const bookById = new Map<string, Book>(books.map((b) => [b.id, b]));
+
+  const lines = tally.map((entry, i) => {
+    const book = bookById.get(entry.bookId);
+    const label = book
+      ? `**${book.title}** — ${book.author}`
+      : `*(removed book ${entry.bookId})*`;
+    const medal = i === 0 ? "🏆" : i === 1 ? "🥈" : i === 2 ? "🥉" : "•";
+    const pct = Math.round((entry.count / total) * 100);
+    return `${medal} ${label}\n   ${entry.count} vote${
+      entry.count === 1 ? "" : "s"
+    } (${pct}%)`;
+  });
+
+  const embed = {
+    title: "🗳️ Current Poll",
+    description: lines.join("\n\n"),
+    color: EMBED_COLOR,
+    footer: {
+      text: `${total} total vote${total === 1 ? "" : "s"}`,
+    },
+  };
+
+  return res.json(embedResponse(embed));
+}
+
+async function handlePollClear(res: VercelResponse) {
+  const cleared = await clearVotes();
+  return res.json(
+    ephemeralResponse(
+      `🧹 Cleared ${cleared} vote${cleared === 1 ? "" : "s"}. Polls reset.`
+    )
+  );
 }

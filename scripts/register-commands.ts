@@ -46,6 +46,27 @@ const commands = [
       },
     ],
   },
+  {
+    name: "vote",
+    description: "Vote for the next book to read (one vote per person)",
+    options: [
+      {
+        name: "book",
+        description: "Start typing to pick from the reading list",
+        type: 3, // STRING
+        required: true,
+        autocomplete: true,
+      },
+    ],
+  },
+  {
+    name: "poll",
+    description: "Show the current vote tally",
+  },
+  {
+    name: "poll-clear",
+    description: "Clear all votes and start a new poll",
+  },
 ];
 
 async function main() {
