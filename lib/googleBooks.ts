@@ -16,7 +16,10 @@ export async function searchBooks(query: string): Promise<BookMetadata[]> {
   const url = `https://www.googleapis.com/books/v1/volumes?q=${encoded}&maxResults=5&printType=books${key}`;
 
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Google Books API error: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Google Books API error: ${res.status} — ${body}`);
+  }
 
   const data = await res.json();
   if (!data.items || data.items.length === 0) return [];

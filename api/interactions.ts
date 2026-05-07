@@ -110,7 +110,8 @@ async function handleAddBook(res: VercelResponse, query: string) {
   let results;
   try {
     results = await searchBooks(query);
-  } catch {
+  } catch (err) {
+    console.error("Google Books fetch error:", err);
     return res.json(
       ephemeralResponse("Failed to reach Google Books. Please try again.")
     );
