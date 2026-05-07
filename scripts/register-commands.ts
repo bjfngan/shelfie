@@ -100,13 +100,13 @@ const commands = [
   },
   {
     name: "finish",
-    description: "Mark a book as finished and move it to the archive",
+    description: "Mark a book as finished (defaults to currently-reading book)",
     options: [
       {
         name: "book",
-        description: "Pick a book from the reading list",
+        description: "Pick a book — leave blank to finish the currently-reading book",
         type: 3, // STRING
-        required: true,
+        required: false,
         autocomplete: true,
       },
     ],

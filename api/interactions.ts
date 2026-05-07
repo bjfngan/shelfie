@@ -100,8 +100,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleClearCurrent(res);
     }
     if (name === "finish") {
-      const bookId = getOption(interaction, "book") as string;
-      return handleFinish(res, bookId);
+      const bookId = getOption(interaction, "book") as string | undefined;
+      return handleFinish(res, bookId ?? null);
     }
     if (name === "archive") {
       return handleArchive(res);
@@ -503,9 +503,22 @@ async function handleClearCurrent(res: VercelResponse) {
   return res.json(ephemeralResponse("Cleared currently-reading status."));
 }
 
-async function handleFinish(res: VercelResponse, bookId: string) {
+async function handleFinish(res: VercelResponse, bookId: string | null) {
+  // Default to the currently-reading book when no book is specified
+  let targetId = bookId;
+  if (!targetId) {
+    targetId = await getCurrent();
+    if (!targetId) {
+      return res.json(
+        ephemeralResponse(
+          "No currently-reading book is set. Either pass `book:` or use `/poll-end` to set one."
+        )
+      );
+    }
+  }
+
   const books = await getBooks();
-  const book = books.find((b) => b.id === bookId);
+  const book = books.find((b) => b.id === targetId);
   if (!book) {
     return res.json(
       ephemeralResponse(
@@ -516,8 +529,8 @@ async function handleFinish(res: VercelResponse, bookId: string) {
 
   // Move from books -> archived (keep ratings as historical record)
   await addToArchive(book);
-  await removeBook(bookId);
-  await Promise.all([clearVoteFor(bookId), clearCurrentIfMatches(bookId)]);
+  await removeBook(targetId);
+  await Promise.all([clearVoteFor(targetId), clearCurrentIfMatches(targetId)]);
 
   return res.json(
     ephemeralResponse(
