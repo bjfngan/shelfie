@@ -9,8 +9,8 @@ export interface Book {
   id: string;
   title: string;
   author: string;
-  rating: number | null;
-  ratingsCount: number | null;
+  pageCount: number | null;
+  genres: string[];
   thumbnail: string | null;
   goodreadsUrl: string;
   addedAt: string;

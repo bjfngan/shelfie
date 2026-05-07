@@ -145,18 +145,16 @@ async function handleBooks(res: VercelResponse) {
   }
 
   const fields = books.map((book, i) => {
-    const ratingLine = book.rating
-      ? `${book.rating}/5 ⭐ (${book.ratingsCount?.toLocaleString()} ratings)`
-      : "No rating available";
+    const lines: string[] = [`by **${book.author}**`];
+    if (book.pageCount) lines.push(`📖 ${book.pageCount} pages`);
+    if (book.genres && book.genres.length > 0) {
+      lines.push(book.genres.map((g) => `\`${g}\``).join(" "));
+    }
+    lines.push(`[View on Goodreads](${book.goodreadsUrl})`);
 
     return {
       name: `${i + 1}. ${book.title}`,
-      value: [
-        `by **${book.author}**`,
-        ratingLine,
-        `[Search on Goodreads](${book.goodreadsUrl})`,
-        `ID: \`${book.id}\``,
-      ].join("\n"),
+      value: lines.join("\n"),
       inline: false,
     };
   });
@@ -209,29 +207,31 @@ async function handleAddBook(res: VercelResponse, query: string) {
     );
   }
 
-  const ratingLine = best.rating
-    ? `${best.rating}/5 ⭐ (${best.ratingsCount?.toLocaleString()} ratings)`
-    : "No rating available";
+  const fields: any[] = [
+    { name: "Title", value: best.title, inline: true },
+    { name: "Author", value: best.author, inline: true },
+  ];
+  if (best.pageCount) {
+    fields.push({ name: "Pages", value: `${best.pageCount}`, inline: true });
+  }
+  if (best.genres && best.genres.length > 0) {
+    fields.push({
+      name: "Genres",
+      value: best.genres.map((g) => `\`${g}\``).join(" "),
+      inline: false,
+    });
+  }
+  fields.push({
+    name: "Goodreads",
+    value: `[View on Goodreads](${best.goodreadsUrl})`,
+    inline: false,
+  });
 
   const embed = {
     title: "✅ Book Added",
     color: EMBED_COLOR,
     thumbnail: best.thumbnail ? { url: best.thumbnail } : undefined,
-    fields: [
-      { name: "Title", value: best.title, inline: true },
-      { name: "Author", value: best.author, inline: true },
-      { name: "Rating", value: ratingLine, inline: true },
-      {
-        name: "Goodreads",
-        value: `[Search on Goodreads](${best.goodreadsUrl})`,
-        inline: false,
-      },
-      {
-        name: "Book ID",
-        value: `\`${best.id}\` *(use with \`/remove-book\`)*`,
-        inline: false,
-      },
-    ],
+    fields,
   };
 
   return res.json(embedResponse(embed));

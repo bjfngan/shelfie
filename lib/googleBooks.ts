@@ -2,8 +2,8 @@ export interface BookMetadata {
   id: string;
   title: string;
   author: string;
-  rating: number | null;
-  ratingsCount: number | null;
+  pageCount: number | null;
+  genres: string[];
   thumbnail: string | null;
   goodreadsUrl: string;
 }
@@ -55,11 +55,29 @@ function normalizeVolume(item: any): BookMetadata {
     id: item.id,
     title,
     author,
-    rating: info.averageRating ?? null,
-    ratingsCount: info.ratingsCount ?? null,
+    pageCount: typeof info.pageCount === "number" ? info.pageCount : null,
+    genres: extractGenres(info.categories),
     thumbnail,
     goodreadsUrl: buildGoodreadsUrl(title, author, isbn),
   };
+}
+
+// Google Books returns categories like ["Fiction / Science Fiction / Space Opera"].
+// Split on slashes, trim, drop the generic top-level "Fiction"/"Nonfiction", dedupe.
+function extractGenres(categories: string[] | undefined): string[] {
+  if (!categories) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of categories) {
+    for (const part of raw.split("/").map((s) => s.trim())) {
+      const lower = part.toLowerCase();
+      if (!part || lower === "fiction" || lower === "nonfiction") continue;
+      if (seen.has(lower)) continue;
+      seen.add(lower);
+      result.push(part);
+    }
+  }
+  return result;
 }
 
 function extractIsbn(
