@@ -3,7 +3,21 @@ import { InteractionType, verifyKey } from "discord-interactions";
 import { addBook, Book, getBooks, removeBook } from "../lib/books";
 import { embedResponse, ephemeralResponse, EMBED_COLOR } from "../lib/discord";
 import { getBookById, searchBooks } from "../lib/googleBooks";
-import { castVote, clearVotes, getVotes, tallyVotes } from "../lib/votes";
+import {
+  castVote,
+  clearVotes,
+  getVotes,
+  setVotes,
+  tallyVotes,
+} from "../lib/votes";
+import {
+  clearRatings,
+  getRatings,
+  setRating,
+  summarize,
+} from "../lib/ratings";
+import { clearCurrent, getCurrent, setCurrent } from "../lib/current";
+import { addToArchive, getArchive } from "../lib/archive";
 
 // Required: get raw bytes for Ed25519 signature verification
 export const config = { api: { bodyParser: false } };
@@ -74,6 +88,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (name === "poll-clear") {
       return handlePollClear(res);
     }
+    if (name === "rate") {
+      const bookId = getOption(interaction, "book") as string;
+      const score = getOption(interaction, "score") as number;
+      return handleRate(res, userId, bookId, score);
+    }
+    if (name === "current") {
+      const bookId = getOption(interaction, "book") as string | undefined;
+      return handleCurrent(res, bookId ?? null);
+    }
+    if (name === "clear-current") {
+      return handleClearCurrent(res);
+    }
+    if (name === "finish") {
+      const bookId = getOption(interaction, "book") as string;
+      return handleFinish(res, bookId);
+    }
+    if (name === "archive") {
+      return handleArchive(res);
+    }
   }
 
   return res.status(400).send("Unknown interaction type");
@@ -103,8 +136,14 @@ async function handleAutocomplete(res: VercelResponse, interaction: any) {
     return res.json({ type: 8, data: { choices } });
   }
 
-  // /vote and /remove-book: filter the current reading list
-  if (commandName === "vote" || commandName === "remove-book") {
+  // /vote, /remove-book, /rate, /current, /finish: filter the current reading list
+  if (
+    commandName === "vote" ||
+    commandName === "remove-book" ||
+    commandName === "rate" ||
+    commandName === "current" ||
+    commandName === "finish"
+  ) {
     const lower = query.toLowerCase();
     const books = await getBooks();
     const matches = books.filter((b, i) =>
@@ -134,7 +173,11 @@ function getOption(interaction: any, name: string): unknown {
 }
 
 async function handleBooks(res: VercelResponse) {
-  const books = await getBooks();
+  const [books, ratings, currentId] = await Promise.all([
+    getBooks(),
+    getRatings(),
+    getCurrent(),
+  ]);
 
   if (books.length === 0) {
     return res.json(
@@ -150,17 +193,34 @@ async function handleBooks(res: VercelResponse) {
     if (book.genres && book.genres.length > 0) {
       lines.push(book.genres.map((g) => `\`${g}\``).join(" "));
     }
+    const summary = summarize(ratings, book.id);
+    if (summary) {
+      lines.push(
+        `⭐ ${summary.average}/100 (${summary.count} rating${
+          summary.count === 1 ? "" : "s"
+        })`
+      );
+    }
     lines.push(`[View on Goodreads](${book.goodreadsUrl})`);
 
+    const marker = book.id === currentId ? "📖 " : "";
     return {
-      name: `${i + 1}. ${book.title}`,
+      name: `${marker}${i + 1}. ${book.title}`,
       value: lines.join("\n"),
       inline: false,
     };
   });
 
+  const currentBook = currentId
+    ? books.find((b) => b.id === currentId)
+    : undefined;
+  const description = currentBook
+    ? `📖 Currently reading: **${currentBook.title}** by ${currentBook.author}`
+    : undefined;
+
   const embed = {
     title: "📚 Reading List",
+    description,
     color: EMBED_COLOR,
     fields: fields.slice(0, 25), // Discord limit
     footer: {
@@ -260,7 +320,30 @@ async function handleRemoveBook(res: VercelResponse, input: string) {
     );
   }
 
+  await Promise.all([
+    clearRatings(targetId),
+    clearVoteFor(targetId),
+    clearCurrentIfMatches(targetId),
+  ]);
+
   return res.json(ephemeralResponse("Book removed from the reading list."));
+}
+
+async function clearVoteFor(bookId: string): Promise<void> {
+  const votes = await getVotes();
+  let changed = false;
+  for (const userId of Object.keys(votes)) {
+    if (votes[userId] === bookId) {
+      delete votes[userId];
+      changed = true;
+    }
+  }
+  if (changed) await setVotes(votes);
+}
+
+async function clearCurrentIfMatches(bookId: string): Promise<void> {
+  const current = await getCurrent();
+  if (current === bookId) await clearCurrent();
 }
 
 async function handleVote(res: VercelResponse, userId: string, bookId: string) {
@@ -327,4 +410,167 @@ async function handlePollClear(res: VercelResponse) {
       `🧹 Cleared ${cleared} vote${cleared === 1 ? "" : "s"}. Polls reset.`
     )
   );
+}
+
+async function handleRate(
+  res: VercelResponse,
+  userId: string,
+  bookId: string,
+  score: number
+) {
+  if (!Number.isInteger(score) || score < 1 || score > 100) {
+    return res.json(
+      ephemeralResponse("Score must be an integer from 1 to 100.")
+    );
+  }
+
+  const books = await getBooks();
+  const book = books.find((b) => b.id === bookId);
+  if (!book) {
+    return res.json(
+      ephemeralResponse(
+        "That book is no longer in the reading list. Use `/books` to see current options."
+      )
+    );
+  }
+
+  await setRating(bookId, userId, score);
+  const ratings = await getRatings();
+  const summary = summarize(ratings, bookId)!;
+
+  return res.json(
+    ephemeralResponse(
+      `⭐ Rated **${book.title}** ${score}/100. Average is now ${summary.average}/100 (${summary.count} rating${
+        summary.count === 1 ? "" : "s"
+      }).`
+    )
+  );
+}
+
+async function handleCurrent(res: VercelResponse, bookId: string | null) {
+  if (!bookId) {
+    const currentId = await getCurrent();
+    if (!currentId) {
+      return res.json(
+        ephemeralResponse(
+          "Nothing is currently being read. Use `/current book:<title>` to set one."
+        )
+      );
+    }
+    const books = await getBooks();
+    const book = books.find((b) => b.id === currentId);
+    if (!book) {
+      return res.json(
+        ephemeralResponse(
+          "Currently reading is set to a book that's no longer in the list."
+        )
+      );
+    }
+    return res.json(
+      ephemeralResponse(
+        `📖 Currently reading: **${book.title}** by ${book.author}`
+      )
+    );
+  }
+
+  const books = await getBooks();
+  const book = books.find((b) => b.id === bookId);
+  if (!book) {
+    return res.json(
+      ephemeralResponse(
+        "That book is no longer in the reading list. Use `/books` to see current options."
+      )
+    );
+  }
+
+  await setCurrent(bookId);
+  return res.json(
+    ephemeralResponse(
+      `📖 Now reading: **${book.title}** by ${book.author}`
+    )
+  );
+}
+
+async function handleClearCurrent(res: VercelResponse) {
+  await clearCurrent();
+  return res.json(ephemeralResponse("Cleared currently-reading status."));
+}
+
+async function handleFinish(res: VercelResponse, bookId: string) {
+  const books = await getBooks();
+  const book = books.find((b) => b.id === bookId);
+  if (!book) {
+    return res.json(
+      ephemeralResponse(
+        "That book is no longer in the reading list. Use `/books` to see current options."
+      )
+    );
+  }
+
+  // Move from books -> archived (keep ratings as historical record)
+  await addToArchive(book);
+  await removeBook(bookId);
+  await Promise.all([clearVoteFor(bookId), clearCurrentIfMatches(bookId)]);
+
+  return res.json(
+    ephemeralResponse(
+      `✅ Finished **${book.title}**. Moved to archive — see \`/archive\`.`
+    )
+  );
+}
+
+async function handleArchive(res: VercelResponse) {
+  const [archive, ratings] = await Promise.all([getArchive(), getRatings()]);
+
+  if (archive.length === 0) {
+    return res.json(
+      ephemeralResponse(
+        "No archived books yet. Use `/finish` after you've read one."
+      )
+    );
+  }
+
+  const sorted = [...archive].sort((a, b) =>
+    b.finishedAt.localeCompare(a.finishedAt)
+  );
+
+  const fields = sorted.slice(0, 25).map((book) => {
+    const finished = formatFinishedDate(book.finishedAt);
+    const summary = summarize(ratings, book.id);
+    const ratingLine = summary
+      ? `⭐ ${summary.average}/100 (${summary.count} rating${
+          summary.count === 1 ? "" : "s"
+        })`
+      : "No ratings";
+
+    return {
+      name: book.title,
+      value: [
+        `by **${book.author}**`,
+        `Finished: ${finished}`,
+        ratingLine,
+      ].join("\n"),
+      inline: false,
+    };
+  });
+
+  const embed = {
+    title: "📚 Archive",
+    color: EMBED_COLOR,
+    fields,
+    footer: {
+      text: `${archive.length} book${archive.length === 1 ? "" : "s"} finished`,
+    },
+  };
+
+  return res.json(embedResponse(embed));
+}
+
+function formatFinishedDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 }

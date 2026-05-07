@@ -69,6 +69,61 @@ const commands = [
     name: "poll-clear",
     description: "Clear all votes and start a new poll",
   },
+  {
+    name: "rate",
+    description: "Rate a book from 1 to 100 (one rating per person)",
+    options: [
+      {
+        name: "book",
+        description: "Pick a book from the reading list",
+        type: 3, // STRING
+        required: true,
+        autocomplete: true,
+      },
+      {
+        name: "score",
+        description: "Score from 1 to 100",
+        type: 4, // INTEGER
+        required: true,
+        min_value: 1,
+        max_value: 100,
+      },
+    ],
+  },
+  {
+    name: "current",
+    description: "Show or set the currently-reading book",
+    options: [
+      {
+        name: "book",
+        description: "Pick a book to mark as currently reading (omit to view current)",
+        type: 3, // STRING
+        required: false,
+        autocomplete: true,
+      },
+    ],
+  },
+  {
+    name: "clear-current",
+    description: "Clear the currently-reading book",
+  },
+  {
+    name: "finish",
+    description: "Mark a book as finished and move it to the archive",
+    options: [
+      {
+        name: "book",
+        description: "Pick a book from the reading list",
+        type: 3, // STRING
+        required: true,
+        autocomplete: true,
+      },
+    ],
+  },
+  {
+    name: "archive",
+    description: "Show the list of finished books",
+  },
 ];
 
 async function main() {

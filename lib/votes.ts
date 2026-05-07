@@ -21,6 +21,10 @@ export async function castVote(userId: string, bookId: string): Promise<void> {
   await kv.set(KV_KEY, votes);
 }
 
+export async function setVotes(votes: VoteMap): Promise<void> {
+  await kv.set(KV_KEY, votes);
+}
+
 export async function clearVotes(): Promise<number> {
   const votes = await getVotes();
   const count = Object.keys(votes).length;
