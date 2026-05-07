@@ -89,9 +89,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handlePollClear(res);
     }
     if (name === "rate") {
-      const bookId = getOption(interaction, "book") as string;
+      const bookId = getOption(interaction, "book") as string | undefined;
       const score = getOption(interaction, "score") as number;
-      return handleRate(res, userId, bookId, score);
+      return handleRate(res, userId, bookId ?? null, score);
     }
     if (name === "current") {
       const bookId = getOption(interaction, "book") as string | undefined;
@@ -415,7 +415,7 @@ async function handlePollClear(res: VercelResponse) {
 async function handleRate(
   res: VercelResponse,
   userId: string,
-  bookId: string,
+  bookId: string | null,
   score: number
 ) {
   if (!Number.isInteger(score) || score < 1 || score > 100) {
@@ -424,8 +424,21 @@ async function handleRate(
     );
   }
 
+  // Default to the currently-reading book when no book is specified
+  let targetId = bookId;
+  if (!targetId) {
+    targetId = await getCurrent();
+    if (!targetId) {
+      return res.json(
+        ephemeralResponse(
+          "No currently-reading book is set. Either pass `book:` or use `/current` to set one."
+        )
+      );
+    }
+  }
+
   const books = await getBooks();
-  const book = books.find((b) => b.id === bookId);
+  const book = books.find((b) => b.id === targetId);
   if (!book) {
     return res.json(
       ephemeralResponse(
@@ -434,9 +447,9 @@ async function handleRate(
     );
   }
 
-  await setRating(bookId, userId, score);
+  await setRating(targetId, userId, score);
   const ratings = await getRatings();
-  const summary = summarize(ratings, bookId)!;
+  const summary = summarize(ratings, targetId)!;
 
   return res.json(
     ephemeralResponse(

@@ -71,15 +71,8 @@ const commands = [
   },
   {
     name: "rate",
-    description: "Rate a book from 1 to 100 (one rating per person)",
+    description: "Rate a book from 1 to 100 (defaults to currently-reading book)",
     options: [
-      {
-        name: "book",
-        description: "Pick a book from the reading list",
-        type: 3, // STRING
-        required: true,
-        autocomplete: true,
-      },
       {
         name: "score",
         description: "Score from 1 to 100",
@@ -87,6 +80,13 @@ const commands = [
         required: true,
         min_value: 1,
         max_value: 100,
+      },
+      {
+        name: "book",
+        description: "Pick a book — leave blank to rate the currently-reading book",
+        type: 3, // STRING
+        required: false,
+        autocomplete: true,
       },
     ],
   },
