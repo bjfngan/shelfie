@@ -28,21 +28,23 @@ const commands = [
     options: [
       {
         name: "query",
-        description: "Title, author, or ISBN to search for",
+        description: "Start typing — pick a result from the suggestions",
         type: 3, // STRING
         required: true,
+        autocomplete: true,
       },
     ],
   },
   {
     name: "remove-book",
-    description: "Remove a book from the reading list by its ID",
+    description: "Remove a book from the reading list",
     options: [
       {
-        name: "id",
-        description: "Book ID shown in the /books list",
+        name: "book",
+        description: "List number (e.g. 3) or pick from the suggestions",
         type: 3, // STRING
         required: true,
+        autocomplete: true,
       },
     ],
   },

@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { InteractionType, verifyKey } from "discord-interactions";
 import { addBook, Book, getBooks, removeBook } from "../lib/books";
 import { embedResponse, ephemeralResponse, EMBED_COLOR } from "../lib/discord";
-import { searchBooks } from "../lib/googleBooks";
+import { getBookById, searchBooks } from "../lib/googleBooks";
 import { castVote, clearVotes, getVotes, tallyVotes } from "../lib/votes";
 
 // Required: get raw bytes for Ed25519 signature verification
@@ -61,8 +61,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleAddBook(res, query);
     }
     if (name === "remove-book") {
-      const id = getOption(interaction, "id") as string;
-      return handleRemoveBook(res, id);
+      const input = getOption(interaction, "book") as string;
+      return handleRemoveBook(res, input);
     }
     if (name === "vote") {
       const bookId = getOption(interaction, "book") as string;
@@ -81,25 +81,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 async function handleAutocomplete(res: VercelResponse, interaction: any) {
   const commandName: string = interaction.data.name;
-  if (commandName !== "vote") {
-    return res.json({ type: 8, data: { choices: [] } });
+  const focused = interaction.data.options?.find((o: any) => o.focused);
+  const query = ((focused?.value as string) ?? "").trim();
+
+  // /add-book: search Google Books live and offer top results
+  if (commandName === "add-book") {
+    if (query.length < 2) {
+      return res.json({ type: 8, data: { choices: [] } });
+    }
+    let results;
+    try {
+      results = await searchBooks(query);
+    } catch (err) {
+      console.error("Autocomplete Google Books error:", err);
+      return res.json({ type: 8, data: { choices: [] } });
+    }
+    const choices = results.slice(0, 25).map((b) => ({
+      name: truncate(`${b.title} — ${b.author}`, 100),
+      value: b.id,
+    }));
+    return res.json({ type: 8, data: { choices } });
   }
 
-  const focused = interaction.data.options?.find((o: any) => o.focused);
-  const query = ((focused?.value as string) ?? "").toLowerCase();
+  // /vote and /remove-book: filter the current reading list
+  if (commandName === "vote" || commandName === "remove-book") {
+    const lower = query.toLowerCase();
+    const books = await getBooks();
+    const matches = books.filter((b, i) =>
+      lower === ""
+        ? true
+        : `${i + 1} ${b.title} ${b.author}`.toLowerCase().includes(lower)
+    );
+    const choices = matches.slice(0, 25).map((b, i) => {
+      const realIndex = books.indexOf(b);
+      return {
+        name: truncate(`${realIndex + 1}. ${b.title} — ${b.author}`, 100),
+        value: b.id,
+      };
+    });
+    return res.json({ type: 8, data: { choices } });
+  }
 
-  const books = await getBooks();
-  const matches = books.filter((b) =>
-    `${b.title} ${b.author}`.toLowerCase().includes(query)
-  );
-
-  const choices = matches.slice(0, 25).map((b) => ({
-    name: truncate(`${b.title} — ${b.author}`, 100),
-    value: b.id,
-  }));
-
-  // type 8 = APPLICATION_COMMAND_AUTOCOMPLETE_RESULT
-  return res.json({ type: 8, data: { choices } });
+  return res.json({ type: 8, data: { choices: [] } });
 }
 
 function truncate(str: string, max: number): string {
@@ -151,9 +174,24 @@ async function handleBooks(res: VercelResponse) {
 }
 
 async function handleAddBook(res: VercelResponse, query: string) {
-  let results;
+  // If autocomplete was used, query is a Google Books volume ID — fetch directly.
+  // Otherwise, fall back to a search and use the top result.
+  let best;
   try {
-    results = await searchBooks(query);
+    const byId = await getBookById(query).catch(() => null);
+    if (byId) {
+      best = byId;
+    } else {
+      const results = await searchBooks(query);
+      if (results.length === 0) {
+        return res.json(
+          ephemeralResponse(
+            `No books found for "${query}". Try a different title or author.`
+          )
+        );
+      }
+      best = results[0];
+    }
   } catch (err) {
     console.error("Google Books fetch error:", err);
     return res.json(
@@ -161,15 +199,6 @@ async function handleAddBook(res: VercelResponse, query: string) {
     );
   }
 
-  if (results.length === 0) {
-    return res.json(
-      ephemeralResponse(
-        `No books found for "${query}". Try a different title or author.`
-      )
-    );
-  }
-
-  const best = results[0];
   const result = await addBook({ ...best, addedAt: new Date().toISOString() });
 
   if (result === "duplicate") {
@@ -208,13 +237,25 @@ async function handleAddBook(res: VercelResponse, query: string) {
   return res.json(embedResponse(embed));
 }
 
-async function handleRemoveBook(res: VercelResponse, bookId: string) {
-  const removed = await removeBook(bookId);
+async function handleRemoveBook(res: VercelResponse, input: string) {
+  const trimmed = input.trim();
+  const books = await getBooks();
+
+  // If the input is a positive integer in range, treat it as the list number
+  const asNumber = Number(trimmed);
+  let targetId: string | null = null;
+  if (Number.isInteger(asNumber) && asNumber >= 1 && asNumber <= books.length) {
+    targetId = books[asNumber - 1].id;
+  } else {
+    targetId = trimmed;
+  }
+
+  const removed = await removeBook(targetId);
 
   if (!removed) {
     return res.json(
       ephemeralResponse(
-        `No book found with ID \`${bookId}\`. Use \`/books\` to see IDs.`
+        `No book found matching \`${input}\`. Use \`/books\` to see the list.`
       )
     );
   }
