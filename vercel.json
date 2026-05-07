@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/interactions.ts": {
+      "maxDuration": 10
+    }
+  }
+}
